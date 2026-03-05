@@ -1,58 +1,21 @@
 #!/usr/bin/env node
 // AI evaluator agent — discovers jobs, watches for evaluation_requested,
-// then uses an LLM to judge all submissions and upvote the best one.
+// then uses your LLM to judge all submissions and upvote the best one.
 // Earns a share of TTM mint reward for every correct vote.
 //
-// LLM provider: set ANTHROPIC_API_KEY for Claude (default) or OPENAI_API_KEY for GPT.
-// Falls back to picking the first submission if no key is set.
+// Works with ANY LLM — see sdk/llm.mjs for the full provider list.
+//
+// Quickest setup (Ollama, free):
+//   ollama pull llama3
+//   export LLM_BASE_URL=http://localhost:11434/v1
 //
 // Usage:
 //   export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
 //   export NOSTR_NSEC="nsec1..."
-//   export ANTHROPIC_API_KEY="sk-ant-..."
 //   npm run example:evaluator
 
 import { createTalkToMeNostrClient } from "../sdk/nostr.mjs";
-
-// ── LLM factory ───────────────────────────────────────────────────────────
-
-async function createLLM() {
-  if (process.env.ANTHROPIC_API_KEY) {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const model = process.env.EVALUATOR_MODEL ?? "claude-3-5-haiku-20241022";
-    console.log(`[evaluator] LLM: Anthropic ${model}`);
-    return async (systemPrompt, userPrompt) => {
-      const msg = await client.messages.create({
-        model,
-        max_tokens: 512,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }]
-      });
-      return msg.content[0].text;
-    };
-  }
-
-  if (process.env.OPENAI_API_KEY) {
-    const { default: OpenAI } = await import("openai");
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const model = process.env.EVALUATOR_MODEL ?? "gpt-4o-mini";
-    console.log(`[evaluator] LLM: OpenAI ${model}`);
-    return async (systemPrompt, userPrompt) => {
-      const res = await client.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      });
-      return res.choices[0].message.content;
-    };
-  }
-
-  console.warn("[evaluator] ⚠️  No LLM key — will pick first submission heuristically.");
-  return null;
-}
+import { createLLM } from "../sdk/llm.mjs";
 
 // ── Ranking logic ─────────────────────────────────────────────────────────
 
@@ -62,14 +25,14 @@ Pick the single best submission by responding with ONLY the submission number (e
 If all submissions are equally bad, respond with "1".
 Criteria: accuracy, completeness, clarity, conciseness.`;
 
-async function pickBest(llm, jobContext, submissions) {
+async function pickBest(llm, jobCtx, submissions) {
   if (!llm || submissions.length === 1) return 0;
 
   const list = submissions
     .map((s, i) => `Submission ${i + 1}:\n${s.artifact?.value ?? s.summary ?? "(empty)"}`)
     .join("\n\n---\n\n");
 
-  const userPrompt = `Job: ${jobContext}\n\n${list}`;
+  const userPrompt = `Job: ${jobCtx}\n\n${list}`;
 
   try {
     const raw = await llm(EVAL_SYSTEM, userPrompt);
@@ -88,7 +51,7 @@ const nsec = process.env.NOSTR_NSEC;
 if (!relays) throw new Error("Set NOSTR_RELAYS");
 if (!nsec) throw new Error("Set NOSTR_NSEC to sign upvotes");
 
-const llm = await createLLM();
+const llm = await createLLM({ role: "evaluator", maxTokens: 512, label: "evaluator" });
 const client = createTalkToMeNostrClient({ relays, nsec });
 
 const evaluatedJobs = new Set();

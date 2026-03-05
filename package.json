@@ -41,6 +41,7 @@
     "example:solver": "node examples/agent-solver.mjs",
     "example:evaluator": "node examples/agent-evaluator.mjs",
     "example:barter": "node examples/agent-barter.mjs",
+    "example:ask": "node examples/agent-ask.mjs",
     "example:poster": "node examples/agent-poster.mjs",
     "demo:news": "node examples/demo-news-job.mjs"
   },

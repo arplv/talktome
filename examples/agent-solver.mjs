@@ -1,89 +1,50 @@
 #!/usr/bin/env node
-// AI solver agent — watches the lobby for jobs, uses an LLM to solve them,
-// and submits the answer as a solution event.
+// AI solver agent — watches the lobby for jobs, uses your LLM to solve them,
+// and submits the answer back to the job room.
 //
-// LLM provider: set ANTHROPIC_API_KEY for Claude (default) or OPENAI_API_KEY for GPT.
-// If neither key is set, falls back to a echo-style placeholder (useful for testing).
+// Works with ANY LLM — see sdk/llm.mjs for the full provider list.
+//
+// Quickest setup (Ollama, free, no API key needed):
+//   ollama pull llama3
+//   export LLM_BASE_URL=http://localhost:11434/v1
+//
+// Other options:
+//   export ANTHROPIC_API_KEY=sk-ant-...          # Claude
+//   export OPENAI_API_KEY=sk-...                 # GPT or OpenRouter
+//   export LLM_BASE_URL=https://openrouter.ai/api/v1  # OpenRouter (any model)
+//   export LLM_API_KEY=<openrouter-key>
 //
 // Usage:
 //   export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
 //   export NOSTR_NSEC="nsec1..."
-//   export ANTHROPIC_API_KEY="sk-ant-..."   # or OPENAI_API_KEY
 //   npm run example:solver
 
 import { createTalkToMeNostrClient } from "../sdk/nostr.mjs";
-
-// ── LLM factory (Anthropic preferred, OpenAI fallback, echo if no key) ────
-
-async function createLLM() {
-  if (process.env.ANTHROPIC_API_KEY) {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const model = process.env.SOLVER_MODEL ?? "claude-3-5-haiku-20241022";
-    console.log(`[solver] LLM: Anthropic ${model}`);
-    return async (systemPrompt, userPrompt) => {
-      const msg = await client.messages.create({
-        model,
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }]
-      });
-      return msg.content[0].text;
-    };
-  }
-
-  if (process.env.OPENAI_API_KEY) {
-    const { default: OpenAI } = await import("openai");
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const model = process.env.SOLVER_MODEL ?? "gpt-4o-mini";
-    console.log(`[solver] LLM: OpenAI ${model}`);
-    return async (systemPrompt, userPrompt) => {
-      const res = await client.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      });
-      return res.choices[0].message.content;
-    };
-  }
-
-  console.warn("[solver] ⚠️  No LLM key found (set ANTHROPIC_API_KEY or OPENAI_API_KEY). Using echo fallback.");
-  return async (_sys, userPrompt) => `[echo] ${userPrompt}`;
-}
-
-// ── Boot ───────────────────────────────────────────────────────────────────
+import { createLLM } from "../sdk/llm.mjs";
 
 const relays = process.env.NOSTR_RELAYS;
 const nsec = process.env.NOSTR_NSEC;
 if (!relays) throw new Error("Set NOSTR_RELAYS");
 if (!nsec) throw new Error("Set NOSTR_NSEC to sign submissions");
 
-const llm = await createLLM();
+const llm = await createLLM({ role: "solver", maxTokens: 2048, label: "solver" });
 const client = createTalkToMeNostrClient({ relays, nsec });
 const joinedJobs = new Set();
 
-console.log(`[solver] pubkey=${client.npub} relays=${client.relays.join(",")}`);
+console.log(`[solver] pubkey=${client.npub}`);
 console.log("[solver] watching lobby for jobs...\n");
 
-const SYSTEM_PROMPT = `You are a skilled AI agent participating in a decentralized job marketplace.
-Your task is to solve the job described by the user as accurately and helpfully as possible.
-Be concise but complete. Do not mention that you are an AI unless specifically asked.
-Respond only with the answer — no preamble, no "here is my solution".`;
+const SYSTEM_PROMPT = `You are a skilled AI agent in a decentralised job marketplace.
+Solve the task accurately and completely. Be concise but thorough.
+Return only the answer — no preamble, no sign-off.`;
 
 async function solveJob(payload) {
-  const userPrompt = [
-    `Job title: ${payload.title}`,
-    payload.description ? `\nDescription:\n${payload.description}` : "",
-    payload.tags?.length ? `\nTags: ${payload.tags.join(", ")}` : "",
-    `\nComplexity score: ${payload.complexity ?? 1} / 10`
-  ].join("");
-
-  return llm(SYSTEM_PROMPT, userPrompt);
+  const parts = [`Task: ${payload.title}`];
+  if (payload.description) parts.push(`\nDetails:\n${payload.description}`);
+  if (payload.tags?.length) parts.push(`\nTags: ${payload.tags.join(", ")}`);
+  if (payload.complexity) parts.push(`\nComplexity: ${payload.complexity}/10`);
+  return llm(SYSTEM_PROMPT, parts.join(""));
 }
-
-// ── Lobby watcher ──────────────────────────────────────────────────────────
 
 const lobby = client.watchLobby({
   onJob: async ({ payload }) => {
@@ -91,13 +52,12 @@ const lobby = client.watchLobby({
     if (!roomId || joinedJobs.has(roomId)) return;
     joinedJobs.add(roomId);
 
-    console.log(`[solver] 📨 job: "${payload.title}" (complexity=${payload.complexity ?? "?"} room=${roomId})`);
-    console.log("[solver] 🤔 thinking...");
+    console.log(`[solver] 📨 "${payload.title}" (complexity=${payload.complexity ?? "?"} room=${roomId})`);
+    console.log("[solver] 🤔 solving...");
 
     try {
       const answer = await solveJob(payload);
-      console.log(`[solver] ✅ solution ready (${answer.length} chars)`);
-
+      console.log(`[solver] ✅ ${answer.length} chars`);
       const result = await client.submitJobSolution({
         roomId,
         artifact: { kind: "text", value: answer },
@@ -116,8 +76,6 @@ const lobby = client.watchLobby({
     joinedJobs.add(roomId);
 
     console.log(`[solver] 📨 legacy issue: "${payload.title}" room=${roomId}`);
-    console.log("[solver] 🤔 thinking...");
-
     try {
       const answer = await solveJob(payload);
       const result = await client.submitSolution({
@@ -134,7 +92,6 @@ const lobby = client.watchLobby({
 });
 
 process.on("SIGINT", () => {
-  console.log("[solver] shutting down");
   lobby.close();
   client.destroy();
   process.exit(0);
