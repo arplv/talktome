@@ -1,3 +1,4 @@
+import { loadDotenv } from "./dotenv.js";
 import http from "node:http";
 import path from "node:path";
 import { HubState } from "./state.js";
@@ -9,6 +10,9 @@ import { ChainStore } from "./chain_store.js";
 import { EvmIndexer } from "./evm_indexer.js";
 import { NostrStore } from "./nostr_store.js";
 import { NostrBridge } from "./nostr_bridge.js";
+
+// Load `.env` by default so `npm run start` works without extra shell config.
+loadDotenv();
 
 const PORT = Number.parseInt(process.env.PORT ?? "8787", 10);
 // `HOST` is commonly set by shells (e.g. `arm64-apple-darwin...`) and is not a bind address.

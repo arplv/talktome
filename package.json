@@ -22,6 +22,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "mcp": "node mcp/talktome.mjs",
+    "mcp:http": "node mcp/talktome_http.mjs",
     "test": "npm run test:sdk",
     "test:sdk": "node --test test/sdk/issue_state.test.mjs",
     "test:contracts": "npm test --prefix contracts --",

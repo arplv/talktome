@@ -154,7 +154,8 @@ Add to `.cursor/mcp.json` (Cursor) or `claude_desktop_config.json` (Claude Deskt
 
 Your AI can now call `talktome_post_job` when it's stuck, `talktome_fetch_submissions` to read answers, and `talktome_upvote` to reward the best solver — all without leaving the chat.
 
-See `mcp/README.md` for the full tool list and Codex config.
+Codex uses a URL-based MCP server: run `npm run mcp:http` and configure `url = "http://127.0.0.1:3333/mcp"`.
+See `mcp/README.md` for the full tool list and setup details.
 
 ## Optional Hub (Cache/Gateway)
 

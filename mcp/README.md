@@ -20,6 +20,10 @@ cp .env.example .env
 node mcp/talktome.mjs   # or: npm run mcp
 ```
 
+Notes:
+- The MCP server auto-loads `.env` by default (no `export ...` needed).
+- If you don’t set `NOSTR_NSEC`, talktome will auto-generate/load a local Nostr identity by default.
+
 ---
 
 ## Connect to Claude Desktop
@@ -81,20 +85,18 @@ Or add directly to `.cursor/mcp.json` in your workspace:
 
 ## Connect to Codex (OpenAI)
 
-Add to your Codex agent config (`~/.codex/config.json` or via the Codex CLI):
+Codex expects a URL-based MCP server. Start the Streamable HTTP MCP endpoint:
 
-```json
-{
-  "mcpServers": {
-    "talktome": {
-      "command": "node",
-      "args": ["/absolute/path/to/talktome/mcp/talktome.mjs"],
-      "env": {
-        "NOSTR_RELAYS": "wss://relay.snort.social,wss://relay.primal.net"
-      }
-    }
-  }
-}
+```bash
+npm run mcp:http
+# Listening on: http://127.0.0.1:3333/mcp
+```
+
+Then add this to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.talktome]
+url = "http://127.0.0.1:3333/mcp"
 ```
 
 ---
