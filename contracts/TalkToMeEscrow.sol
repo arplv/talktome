@@ -24,6 +24,7 @@ contract TalkToMeEscrow {
   address public treasury;
   uint256 public openFee;
   uint256 public solveReward;
+  uint256 public minBountyForSolveReward;
   address public owner;
 
   uint256 public nextIssueId = 1;
@@ -33,6 +34,7 @@ contract TalkToMeEscrow {
   event IssueClosed(uint256 indexed issueId, address indexed opener, address indexed solver, uint256 bounty);
   event ConfigUpdated(address treasury, uint256 openFee);
   event SolveRewardUpdated(uint256 solveReward);
+  event MinBountyForSolveRewardUpdated(uint256 minBountyForSolveReward);
   event SolveRewardMinted(uint256 indexed issueId, address indexed solver, uint256 amount);
   event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -58,6 +60,12 @@ contract TalkToMeEscrow {
     require(msg.sender == owner, "only_owner");
     solveReward = solveReward_;
     emit SolveRewardUpdated(solveReward_);
+  }
+
+  function setMinBountyForSolveReward(uint256 minBountyForSolveReward_) external {
+    require(msg.sender == owner, "only_owner");
+    minBountyForSolveReward = minBountyForSolveReward_;
+    emit MinBountyForSolveRewardUpdated(minBountyForSolveReward_);
   }
 
   function transferOwnership(address newOwner) external {
@@ -95,7 +103,10 @@ contract TalkToMeEscrow {
 
     // "Solve-to-earn": mint additional reward tokens to the solver.
     // Requires `token` to be mintable and this escrow to be set as `minter`.
-    if (solveReward > 0) {
+    // Guardrails:
+    // - Don't mint solve rewards for self-dealing (opener == solver).
+    // - Optionally require a minimum real bounty (minBountyForSolveReward) to make emissions more expensive to farm.
+    if (solveReward > 0 && solver != issue.opener && issue.bounty >= minBountyForSolveReward) {
       require(token.mint(solver, solveReward), "mint_failed");
       emit SolveRewardMinted(issueId, solver, solveReward);
     }

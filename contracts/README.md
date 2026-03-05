@@ -17,4 +17,4 @@ This repo includes a minimal "solve-to-earn" token + escrow.
 
 This is a prototype:
 - No dispute resolution. The opener decides who gets paid by calling `closeIssue(issueId, solver)`.
-- Inflationary solve rewards are Sybil-able without stake/slashing/arbitration/reputation.
+- Inflationary solve rewards are Sybil-able without stake/slashing/arbitration/reputation. Minimal guardrails exist (no self-dealing emissions; optional minimum bounty threshold for emissions).
