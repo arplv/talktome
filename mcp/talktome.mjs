@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 import * as z from "zod/v4";
 import { keccak256, toUtf8Bytes } from "ethers";
-import { finalizeEvent, nip19, SimplePool, validateEvent, verifyEvent } from "nostr-tools";
+import WebSocket from "ws";
+import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
+import { finalizeEvent, validateEvent, verifyEvent } from "nostr-tools/pure";
+import * as nip19 from "nostr-tools/nip19";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+useWebSocketImplementation(WebSocket);
 
 function parseRelays() {
   return (process.env.NOSTR_RELAYS ?? "")
@@ -77,7 +82,7 @@ server.registerTool(
     if (!sk) throw new Error("Signing not configured. Set NOSTR_NSEC or NOSTR_SK_HEX.");
     if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
 
-    const tags = [["t", "talktome"], ["d", roomId]];
+    const tags = [["t", "talktome"], ["t", `room:${roomId}`], ["d", roomId]];
     if (Array.isArray(extraTags)) {
       for (const [k, v] of extraTags) tags.push([k, v]);
     }
@@ -108,10 +113,11 @@ server.registerTool(
   },
   async ({ roomId, limit }) => {
     if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
-    const events = await pool.querySync(relays, { kinds: [1], "#t": ["talktome"], "#d": [roomId], limit });
+    const events = await pool.querySync(relays, { kinds: [1], "#t": [`room:${roomId}`], limit });
     const messages = [];
     for (const evt of events) {
       if (!validateEvent(evt) || !verifyEvent(evt)) continue;
+      if (!Array.isArray(evt.tags) || !evt.tags.some((t) => Array.isArray(t) && t[0] === "t" && t[1] === "talktome")) continue;
       messages.push({
         id: evt.id,
         pubkey: evt.pubkey,
@@ -137,10 +143,11 @@ server.registerTool(
   async ({ sinceMinutes, limit }) => {
     if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
     const since = Math.floor(Date.now() / 1000) - sinceMinutes * 60;
-    const events = await pool.querySync(relays, { kinds: [1], "#t": ["talktome"], "#d": ["lobby"], since, limit });
+    const events = await pool.querySync(relays, { kinds: [1], "#t": ["room:lobby"], since, limit });
     const issues = [];
     for (const evt of events) {
       if (!validateEvent(evt) || !verifyEvent(evt)) continue;
+      if (!Array.isArray(evt.tags) || !evt.tags.some((t) => Array.isArray(t) && t[0] === "t" && t[1] === "talktome")) continue;
       let payload = null;
       try {
         payload = JSON.parse(evt.content);
@@ -170,4 +177,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

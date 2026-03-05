@@ -1,4 +1,8 @@
-import { SimplePool, validateEvent, verifyEvent } from "nostr-tools";
+import WebSocket from "ws";
+import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
+import { validateEvent, verifyEvent } from "nostr-tools/pure";
+
+useWebSocketImplementation(WebSocket);
 
 function getTagValue(tags, name) {
   if (!Array.isArray(tags)) return null;
@@ -17,6 +21,22 @@ function toIsoFromNostr(createdAtSeconds) {
   const ms = Number(createdAtSeconds) * 1000;
   if (!Number.isFinite(ms)) return new Date().toISOString();
   return new Date(ms).toISOString();
+}
+
+function roomTopic(roomId) {
+  return `room:${roomId}`;
+}
+
+function getRoomIdFromTags(tags) {
+  const d = getTagValue(tags, "d");
+  if (d) return d;
+  if (!Array.isArray(tags)) return null;
+  for (const t of tags) {
+    if (!Array.isArray(t) || t[0] !== "t") continue;
+    const v = t[1];
+    if (typeof v === "string" && v.startsWith("room:")) return v.slice("room:".length);
+  }
+  return null;
 }
 
 export class NostrBridge {
@@ -66,7 +86,7 @@ export class NostrBridge {
   }
 
   _eventToMessage(event) {
-    const roomId = getTagValue(event.tags, "d");
+    const roomId = getRoomIdFromTags(event.tags);
     if (!roomId) return null;
     if (!hasTag(event.tags, "t", "talktome")) return null;
 
@@ -110,7 +130,7 @@ export class NostrBridge {
     }
 
     const since = this._roomSince(roomId);
-    const closer = this.pool.subscribeMany(this.relays, { kinds: [1], "#t": ["talktome"], "#d": [roomId], since }, {
+    const closer = this.pool.subscribeMany(this.relays, { kinds: [1], "#t": [roomTopic(roomId)], since }, {
       alreadyHaveEvent: (id) => this.seenIds.has(id),
       onevent: (evt) => {
         if (!validateEvent(evt)) return;
@@ -141,7 +161,7 @@ export class NostrBridge {
     if (!verifyEvent(event)) throw new Error("bad_signature");
     if (event.kind !== 1) throw new Error("only_kind_1_supported");
     if (!hasTag(event.tags, "t", "talktome")) throw new Error("missing_talktome_tag");
-    const roomId = getTagValue(event.tags, "d");
+    const roomId = getRoomIdFromTags(event.tags);
     if (!roomId) throw new Error("missing_room_tag");
 
     // Publish best-effort; still process locally.
@@ -154,7 +174,7 @@ export class NostrBridge {
     if (!this.enabled()) throw new Error("nostr_disabled");
     const n = Number.parseInt(String(limit ?? "50"), 10);
     const lim = Number.isFinite(n) ? Math.max(1, Math.min(200, n)) : 50;
-    const events = await this.pool.querySync(this.relays, { kinds: [1], "#t": ["talktome"], "#d": [roomId], limit: lim });
+    const events = await this.pool.querySync(this.relays, { kinds: [1], "#t": [roomTopic(roomId)], limit: lim });
     const messages = [];
     for (const evt of events) {
       if (!validateEvent(evt)) continue;

@@ -1,6 +1,11 @@
 import { Contract, JsonRpcProvider, Wallet, keccak256, toUtf8Bytes } from "ethers";
-import { finalizeEvent, nip19, SimplePool } from "nostr-tools";
+import WebSocket from "ws";
+import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
+import { finalizeEvent } from "nostr-tools/pure";
+import * as nip19 from "nostr-tools/nip19";
 import { TALK_TO_ME_ESCROW_ABI } from "../src/evm_escrow_abi.js";
+
+useWebSocketImplementation(WebSocket);
 
 function decodeSecretKey(value) {
   const v = String(value || "").trim();
@@ -87,6 +92,7 @@ const event = finalizeEvent(
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ["t", "talktome"],
+      ["t", "room:lobby"],
       ["d", "lobby"],
       ["d2", issueRoomId],
       ["x", "issue_opened"],
@@ -115,4 +121,3 @@ console.log(
     2
   )
 );
-

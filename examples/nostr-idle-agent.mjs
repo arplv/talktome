@@ -1,4 +1,8 @@
-import { SimplePool, validateEvent, verifyEvent } from "nostr-tools";
+import WebSocket from "ws";
+import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
+import { validateEvent, verifyEvent } from "nostr-tools/pure";
+
+useWebSocketImplementation(WebSocket);
 
 const relays = (process.env.NOSTR_RELAYS ?? "")
   .split(",")
@@ -9,6 +13,10 @@ if (relays.length === 0) throw new Error("Set NOSTR_RELAYS (comma-separated wss:
 const agent = process.env.TALKTOME_AGENT ?? `nostr-idle-${Math.random().toString(16).slice(2, 8)}`;
 const sinceMinutes = Number.parseInt(process.env.TALKTOME_SINCE_MINUTES ?? "60", 10);
 const since = Math.floor(Date.now() / 1000) - Math.max(0, sinceMinutes) * 60;
+
+function roomTopic(roomId) {
+  return `room:${roomId}`;
+}
 
 function hasTag(tags, name, value) {
   if (!Array.isArray(tags)) return false;
@@ -24,11 +32,16 @@ function getTagValue(tags, name) {
 }
 
 function isTalktomeRoomEvent(evt, roomId) {
-  return evt?.kind === 1 && hasTag(evt.tags, "t", "talktome") && hasTag(evt.tags, "d", roomId);
+  return (
+    evt?.kind === 1 &&
+    hasTag(evt.tags, "t", "talktome") &&
+    (hasTag(evt.tags, "d", roomId) || hasTag(evt.tags, "t", roomTopic(roomId)))
+  );
 }
 
 const pool = new SimplePool({ enableReconnect: true, enablePing: true });
 const joinedRooms = new Set();
+const subs = [];
 
 function joinRoom(roomId) {
   if (joinedRooms.has(roomId)) return;
@@ -36,18 +49,18 @@ function joinRoom(roomId) {
   // eslint-disable-next-line no-console
   console.log(`[join] room=${roomId} agent=${agent}`);
 
-  pool.subscribeMany(relays, { kinds: [1], "#t": ["talktome"], "#d": [roomId], since }, {
+  subs.push(pool.subscribeMany(relays, { kinds: [1], "#t": [roomTopic(roomId)], since }, {
     onevent: (evt) => {
       if (!validateEvent(evt) || !verifyEvent(evt)) return;
       if (!isTalktomeRoomEvent(evt, roomId)) return;
       // eslint-disable-next-line no-console
       console.log(`[${roomId}] nostr:${evt.pubkey}: ${evt.content}`);
     }
-  });
+  }));
 }
 
 // Listen in lobby for announcements.
-pool.subscribeMany(relays, { kinds: [1], "#t": ["talktome"], "#d": ["lobby"], since }, {
+subs.push(pool.subscribeMany(relays, { kinds: [1], "#t": [roomTopic("lobby")], since }, {
   onevent: (evt) => {
     if (!validateEvent(evt) || !verifyEvent(evt)) return;
     if (!isTalktomeRoomEvent(evt, "lobby")) return;
@@ -66,8 +79,10 @@ pool.subscribeMany(relays, { kinds: [1], "#t": ["talktome"], "#d": ["lobby"], si
     console.log(`[issue_opened] room=${roomId} title=${String(body.title ?? "").slice(0, 200)}`);
     joinRoom(roomId);
   }
-});
+}));
 
 // eslint-disable-next-line no-console
 console.log(`[idle] agent=${agent} listening relays=${relays.join(",")}`);
 
+// Keep the process alive even if relay connections flap.
+setInterval(() => {}, 60_000);

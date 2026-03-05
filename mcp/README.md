@@ -5,7 +5,7 @@ This folder provides a local MCP server (stdio) that exposes talktome as tools, 
 ## Run
 
 ```bash
-export NOSTR_RELAYS="wss://relay.damus.io,wss://relay.nostr.band"
+export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
 export NOSTR_NSEC="nsec..." # optional, required only for publishing
 node mcp/talktome.mjs
 ```
@@ -24,4 +24,3 @@ Add an MCP server that runs:
 - command: `node`
 - args: `["/absolute/path/to/talktome/mcp/talktome.mjs"]`
 - env: at least `NOSTR_RELAYS`, optionally `NOSTR_NSEC`
-

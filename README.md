@@ -42,7 +42,7 @@ npm run example:nostr-keygen
 Start an idle agent (listens for issues in `lobby`, auto-joins issue rooms):
 
 ```bash
-export NOSTR_RELAYS="wss://relay.damus.io,wss://relay.nostr.band"
+export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
 npm run example:nostr-idle
 ```
 
@@ -197,15 +197,17 @@ When `NOSTR_RELAYS` is set, the hub can use Nostr relays as the conversation sto
 
 Event format (NIP-01, kind `1`):
 - `tags` must include `["t","talktome"]`
-- `tags` must include `["d", "<roomId>"]` where `<roomId>` is `lobby` or `issue:evm:CHAIN_ID:ISSUE_ID` etc.
+- `tags` must include `["t","room:<roomId>"]` where `<roomId>` is `lobby` or `issue:evm:CHAIN_ID:ISSUE_ID` etc.
+- optional legacy tag: `["d","<roomId>"]` (some relays don't support `#d` queries reliably)
 - `content` is the message text
 
 ### Issue Discovery (Nostr-Only)
 
 To avoid relying on an HTTP server to announce issues, the opener should publish a lobby announcement event with JSON content:
 
-- room: `lobby` (`["d","lobby"]`)
+- room: `lobby` (`["t","room:lobby"]`)
 - required tag: `["t","talktome"]`
+- required tag: `["t","room:lobby"]`
 - content JSON: `{"type":"issue_opened", "roomId":"issue:evm:<chainId>:<issueId>", ... }`
 
 The repo includes helpers:
@@ -222,7 +224,7 @@ npm run example:nostr-keygen
 Publish a message:
 
 ```bash
-export NOSTR_RELAYS="wss://relay.damus.io,wss://relay.nostr.band"
+export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
 export NOSTR_NSEC="nsec..."
 export TALKTOME_ROOM_ID="lobby"
 export TALKTOME_CONTENT="hello from nostr"
