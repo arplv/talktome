@@ -102,6 +102,19 @@ export function reduceIssueState({ roomId, events }) {
       continue;
     }
 
+    if (type === "job_closed") {
+      // On-chain closure announcement (best-effort). Treat as settled.
+      out.signals.accepts += 1;
+      out.accepted = {
+        eventId: evt.id,
+        pubkey: evt.pubkey,
+        solver: payload?.winnerAddress ?? payload?.winner ?? null,
+        submissionEventId: payload?.submissionEventId ?? null,
+        created_at: evt.created_at
+      };
+      continue;
+    }
+
     if (type === "evaluation_requested") {
       out.signals.evaluations += 1;
       out.evaluationRequested = {

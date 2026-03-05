@@ -5,8 +5,8 @@ function toHex32(bytes32ish) {
   return String(bytes32ish);
 }
 
-function issueKey({ chainId, issueId }) {
-  return `evm:${chainId}:${issueId}`;
+function jobKey({ chainId, jobId }) {
+  return `evm:${chainId}:${jobId}`;
 }
 
 export class EvmIndexer {
@@ -29,21 +29,19 @@ export class EvmIndexer {
   }
 
   async getConfig() {
-    const [token, treasury, openFee, solveReward, minBountyForSolveReward] = await Promise.all([
-      this.contract.token(),
+    const [ttm, treasury, openFee, evalRewardBps] = await Promise.all([
+      this.contract.ttm(),
       this.contract.treasury(),
       this.contract.openFee(),
-      this.contract.solveReward(),
-      this.contract.minBountyForSolveReward()
+      this.contract.evalRewardBps()
     ]);
     return {
       chainId: this.chainId,
       escrow: this.escrowAddress,
-      token,
+      ttm,
       treasury,
       openFee: openFee.toString(),
-      solveReward: solveReward.toString(),
-      minBountyForSolveReward: minBountyForSolveReward.toString()
+      evalRewardBps: evalRewardBps.toString()
     };
   }
 
@@ -89,63 +87,91 @@ export class EvmIndexer {
     const toBlock = await this.provider.getBlockNumber();
     if (fromBlock > toBlock) return;
 
-    const openedTopic = this.iface.getEvent("IssueOpened").topicHash;
-    const closedTopic = this.iface.getEvent("IssueClosed").topicHash;
+    const openedTopic = this.iface.getEvent("JobOpened").topicHash;
+    const closedTopic = this.iface.getEvent("JobClosed").topicHash;
+    const canceledTopic = this.iface.getEvent("JobCanceled").topicHash;
 
     const logs = await this.provider.getLogs({
       address: this.escrowAddress,
       fromBlock,
       toBlock,
-      topics: [[openedTopic, closedTopic]]
+      topics: [[openedTopic, closedTopic, canceledTopic]]
     });
 
     for (const log of logs) {
       const parsed = this.iface.parseLog({ topics: log.topics, data: log.data });
       if (!parsed) continue;
 
-      if (parsed.name === "IssueOpened") {
-        const issueId = parsed.args.issueId.toString();
+      if (parsed.name === "JobOpened") {
+        const jobId = parsed.args.jobId.toString();
         const opener = String(parsed.args.opener).toLowerCase();
-        const bounty = parsed.args.bounty.toString();
+        const jobType = Number(parsed.args.jobType);
+        const complexity = Number(parsed.args.complexity);
+        const stableToken = String(parsed.args.stableToken).toLowerCase();
+        const stableBounty = parsed.args.stableBounty.toString();
         const metadataHash = toHex32(parsed.args.metadataHash);
-        const key = issueKey({ chainId: this.chainId, issueId });
+        const deadline = parsed.args.deadline.toString();
+        const key = jobKey({ chainId: this.chainId, jobId });
 
-        const issue = {
+        const job = {
           key,
           chainId: this.chainId,
-          issueId,
+          jobId,
           opener,
-          bounty,
+          jobType,
+          complexity,
+          stableToken,
+          stableBounty,
           metadataHash,
+          deadline,
           openedTx: log.transactionHash,
           openedBlock: log.blockNumber,
           closed: false,
-          solver: null,
+          canceled: false,
+          winner: null,
+          stablePayout: null,
+          ttmMinted: null,
           closedTx: null,
           closedBlock: null
         };
 
-        this.index.issues[key] = { ...(this.index.issues[key] ?? {}), ...issue };
+        this.index.issues[key] = { ...(this.index.issues[key] ?? {}), ...job };
         await this.chainStore.save(this.index);
-        this.onIssueUpsert?.(issue);
+        this.onIssueUpsert?.(job);
       }
 
-      if (parsed.name === "IssueClosed") {
-        const issueId = parsed.args.issueId.toString();
+      if (parsed.name === "JobClosed") {
+        const jobId = parsed.args.jobId.toString();
         const opener = String(parsed.args.opener).toLowerCase();
-        const solver = String(parsed.args.solver).toLowerCase();
-        const key = issueKey({ chainId: this.chainId, issueId });
+        const winner = String(parsed.args.winner).toLowerCase();
+        const stablePayout = parsed.args.stablePayout.toString();
+        const ttmMinted = parsed.args.ttmMinted.toString();
+        const key = jobKey({ chainId: this.chainId, jobId });
 
-        const existing = this.index.issues[key] ?? { key, chainId: this.chainId, issueId, opener };
+        const existing = this.index.issues[key] ?? { key, chainId: this.chainId, jobId, opener };
         const updated = {
           ...existing,
           opener,
           closed: true,
-          solver,
+          canceled: false,
+          winner,
+          stablePayout,
+          ttmMinted,
           closedTx: log.transactionHash,
           closedBlock: log.blockNumber
         };
 
+        this.index.issues[key] = updated;
+        await this.chainStore.save(this.index);
+        this.onIssueUpsert?.(updated);
+      }
+
+      if (parsed.name === "JobCanceled") {
+        const jobId = parsed.args.jobId.toString();
+        const opener = String(parsed.args.opener).toLowerCase();
+        const key = jobKey({ chainId: this.chainId, jobId });
+        const existing = this.index.issues[key] ?? { key, chainId: this.chainId, jobId, opener };
+        const updated = { ...existing, opener, canceled: true, closed: false };
         this.index.issues[key] = updated;
         await this.chainStore.save(this.index);
         this.onIssueUpsert?.(updated);

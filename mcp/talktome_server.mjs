@@ -1,12 +1,13 @@
 import { loadDotenv } from "../src/dotenv.js";
 import * as z from "zod/v4";
-import { keccak256, toUtf8Bytes } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, isAddress, keccak256, toUtf8Bytes } from "ethers";
 import WebSocket from "ws";
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { finalizeEvent, getPublicKey, validateEvent, verifyEvent } from "nostr-tools/pure";
 import * as nip19 from "nostr-tools/nip19";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { reduceIssueState } from "../src/issue_state.js";
+import { TALK_TO_ME_ESCROW_ABI } from "../src/evm_escrow_abi.js";
 import { getDefaultNostrIdentityPath, loadOrCreateNostrIdentity } from "../src/nostr_identity.js";
 
 // Load `.env` by default so `npm run mcp` / `npm run mcp:http` works out-of-the-box.
@@ -83,7 +84,7 @@ server.registerTool(
 server.registerTool(
   "talktome_evm_metadata_hash",
   {
-    description: "Compute the canonical metadata JSON and keccak256 hash (bytes32) for on-chain openIssue(bounty, metadataHash).",
+    description: "Compute the canonical metadata JSON and keccak256 hash (bytes32) for on-chain openJob(complexity, metadataHash, stableToken, stableBounty, deadline).",
     inputSchema: {
       title: z.string(),
       description: z.string(),
@@ -94,6 +95,205 @@ server.registerTool(
     const canonical = JSON.stringify({ title, description, tags });
     const metadataHash = keccak256(toUtf8Bytes(canonical));
     return toMcpText({ canonical, metadataHash });
+  }
+);
+
+function requireEvmEnv() {
+  const rpcUrl = String(process.env.EVM_RPC_URL ?? "").trim();
+  const escrow = String(process.env.EVM_ESCROW_ADDRESS ?? "").trim();
+  const privateKey = String(process.env.EVM_PRIVATE_KEY ?? "").trim();
+  if (!rpcUrl) throw new Error("Set EVM_RPC_URL");
+  if (!escrow) throw new Error("Set EVM_ESCROW_ADDRESS");
+  if (!privateKey) throw new Error("Set EVM_PRIVATE_KEY");
+  return { rpcUrl, escrow, privateKey };
+}
+
+async function ensureApprove({ tokenAddress, ownerWallet, spender, amount }) {
+  if (amount <= 0n) return { approved: false, allowance: 0n };
+  const erc20 = new Contract(
+    tokenAddress,
+    [
+      "function allowance(address owner,address spender) view returns (uint256)",
+      "function approve(address spender,uint256 amount) returns (bool)"
+    ],
+    ownerWallet
+  );
+  const allowance = await erc20.allowance(ownerWallet.address, spender);
+  if (allowance >= amount) return { approved: false, allowance };
+  const tx = await erc20.approve(spender, amount);
+  await tx.wait();
+  const after = await erc20.allowance(ownerWallet.address, spender);
+  return { approved: true, allowance: after };
+}
+
+server.registerTool(
+  "talktome_evm_open_job_and_announce",
+  {
+    description: "Create an on-chain job via TalkToMeEscrow.openJob(...) and announce it to the Nostr lobby + job room.",
+    inputSchema: {
+      title: z.string(),
+      description: z.string(),
+      tags: z.array(z.string()).default([]),
+      complexity: z.number().int().min(1).max(10).default(3),
+      stableToken: z.string().optional().describe("ERC-20 address for stable bounty (omit for token-only jobs)"),
+      stableBounty: z.string().optional().describe("Stable bounty amount (integer in token's smallest units)"),
+      deadline_unix: z.number().int().optional().describe("Unix timestamp; 0/omit for no deadline"),
+      announce: z.boolean().default(true)
+    }
+  },
+  async ({ title, description, tags, complexity, stableToken, stableBounty, deadline_unix, announce }) => {
+    const { rpcUrl, escrow, privateKey } = requireEvmEnv();
+
+    const canonical = JSON.stringify({ title, description, tags });
+    const metadataHash = keccak256(toUtf8Bytes(canonical));
+
+    const provider = new JsonRpcProvider(rpcUrl);
+    const wallet = new Wallet(privateKey, provider);
+    const contract = new Contract(escrow, TALK_TO_ME_ESCROW_ABI, wallet);
+
+    const network = await provider.getNetwork();
+    const chainId = Number(network.chainId);
+
+    const ttmAddress = await contract.ttm();
+    const openFee = await contract.openFee();
+
+    await ensureApprove({ tokenAddress: ttmAddress, ownerWallet: wallet, spender: escrow, amount: openFee });
+
+    const st = stableToken ? String(stableToken).trim() : "0x0000000000000000000000000000000000000000";
+    const sb = stableBounty ? BigInt(String(stableBounty)) : 0n;
+    const deadline = deadline_unix ? BigInt(deadline_unix) : 0n;
+
+    if (st !== "0x0000000000000000000000000000000000000000" && sb > 0n) {
+      if (!isAddress(st)) throw new Error("Invalid stableToken address");
+      await ensureApprove({ tokenAddress: st, ownerWallet: wallet, spender: escrow, amount: sb });
+    }
+
+    const tx = await contract.openJob(Math.max(1, Math.min(10, Number(complexity))), metadataHash, st, sb, deadline);
+    const receipt = await tx.wait();
+    const opened = receipt.logs
+      .map((l) => {
+        try {
+          return contract.interface.parseLog(l);
+        } catch {
+          return null;
+        }
+      })
+      .find((p) => p && p.name === "JobOpened");
+
+    const jobId = opened?.args?.jobId?.toString?.();
+    if (!jobId) throw new Error("Could not parse JobOpened(jobId) from tx receipt");
+
+    const roomId = `job:evm:${chainId}:${jobId}`;
+
+    const payload = {
+      type: "job_opened",
+      roomId,
+      title,
+      description,
+      tags,
+      complexity: Math.max(1, Math.min(10, Number(complexity))),
+      stableToken: st,
+      stableBounty: sb.toString(),
+      deadline_unix: Number(deadline),
+      metadataHash,
+      chain: { kind: "evm", chainId, escrow, jobId: String(jobId), txHash: receipt.hash }
+    };
+
+    let nostr = null;
+    if (announce) {
+      if (!sk) throw new Error("Nostr signing not configured. Set NOSTR_NSEC or enable auto identity.");
+      if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
+
+      const lobbyTags = [["t", "talktome"], ["t", "room:lobby"], ["d", "lobby"], ["x", "job_opened"], ["d2", roomId], ["m", metadataHash]];
+      const lobbyEvent = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags: lobbyTags, content: JSON.stringify(payload) }, sk);
+      await Promise.allSettled(pool.publish(relays, lobbyEvent));
+
+      const roomTags = [["t", "talktome"], ["t", `room:${roomId}`], ["d", roomId], ["x", "job_context"], ["m", metadataHash]];
+      const roomEvent = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags: roomTags, content: JSON.stringify(payload) }, sk);
+      await Promise.allSettled(pool.publish(relays, roomEvent));
+
+      nostr = { lobbyEventId: lobbyEvent.id, roomEventId: roomEvent.id };
+    }
+
+    return toMcpText({
+      ok: true,
+      canonical,
+      metadataHash,
+      chain: { chainId, escrow, txHash: receipt.hash, jobId: String(jobId) },
+      roomId,
+      nostr
+    });
+  }
+);
+
+server.registerTool(
+  "talktome_evm_close_job_and_announce",
+  {
+    description: "Close an on-chain job via TalkToMeEscrow.closeJob(...) and optionally announce the closure to the Nostr room.",
+    inputSchema: {
+      jobId: z.union([z.number().int(), z.string()]).describe("On-chain jobId"),
+      winnerAddress: z.string().describe("0x... address to receive payout/mint"),
+      evaluators: z.array(z.string()).default([]).describe("Optional evaluator addresses (best-effort, not verified on-chain)"),
+      roomId: z.string().optional().describe("Optional Nostr roomId; default is job:evm:<chainId>:<jobId>"),
+      announce: z.boolean().default(true)
+    }
+  },
+  async ({ jobId, winnerAddress, evaluators, roomId, announce }) => {
+    const { rpcUrl, escrow, privateKey } = requireEvmEnv();
+    if (!isAddress(winnerAddress)) throw new Error("Invalid winnerAddress");
+
+    const provider = new JsonRpcProvider(rpcUrl);
+    const wallet = new Wallet(privateKey, provider);
+    const contract = new Contract(escrow, TALK_TO_ME_ESCROW_ABI, wallet);
+
+    const network = await provider.getNetwork();
+    const chainId = Number(network.chainId);
+
+    const tx = await contract.closeJob(BigInt(String(jobId)), winnerAddress, evaluators);
+    const receipt = await tx.wait();
+
+    const closed = receipt.logs
+      .map((l) => {
+        try {
+          return contract.interface.parseLog(l);
+        } catch {
+          return null;
+        }
+      })
+      .find((p) => p && p.name === "JobClosed");
+
+    const parsedJobId = closed?.args?.jobId?.toString?.() ?? String(jobId);
+    const stablePayout = closed?.args?.stablePayout?.toString?.() ?? null;
+    const ttmMinted = closed?.args?.ttmMinted?.toString?.() ?? null;
+
+    const rid = roomId ?? `job:evm:${chainId}:${parsedJobId}`;
+
+    let nostr = null;
+    if (announce) {
+      if (!sk) throw new Error("Nostr signing not configured. Set NOSTR_NSEC or enable auto identity.");
+      if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
+
+      const payload = {
+        type: "job_closed",
+        roomId: rid,
+        chain: { kind: "evm", chainId, escrow, jobId: String(parsedJobId), txHash: receipt.hash },
+        winnerAddress: String(winnerAddress),
+        stablePayout,
+        ttmMinted
+      };
+      const tags = [["t", "talktome"], ["t", `room:${rid}`], ["d", rid], ["x", "job_closed"]];
+      const event = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(payload) }, sk);
+      await Promise.allSettled(pool.publish(relays, event));
+      nostr = { eventId: event.id };
+    }
+
+    return toMcpText({
+      ok: true,
+      chain: { chainId, escrow, txHash: receipt.hash, jobId: String(parsedJobId), stablePayout, ttmMinted },
+      winnerAddress,
+      roomId: rid,
+      nostr
+    });
   }
 );
 
@@ -387,6 +587,101 @@ server.registerTool(
     if (deadline_unix != null) payload.deadline_unix = deadline_unix;
 
     const tags = [["t", "talktome"], ["t", `room:${roomId}`], ["d", roomId], ["x", "evaluation_requested"]];
+    const event = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(payload) }, sk);
+    await Promise.allSettled(pool.publish(relays, event));
+    return toMcpText({ ok: true, id: event.id, roomId });
+  }
+);
+
+function normalizeSolverId(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return null;
+  if (v.startsWith("nostr:")) return v;
+  if (v.startsWith("npub")) {
+    const decoded = nip19.decode(v);
+    if (decoded.type !== "npub") throw new Error("Invalid npub");
+    return `nostr:${decoded.data}`;
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(v)) return `nostr:${v.toLowerCase()}`;
+  return v;
+}
+
+server.registerTool(
+  "talktome_accept_solution",
+  {
+    description: "Mark a job as solved by publishing a solution_accepted state transition to the room.",
+    inputSchema: {
+      roomId: z.string().describe('Job room ID, e.g. "job:offchain:my-task-123"'),
+      submissionEventId: z.string().describe("Nostr event ID of the solution_submitted being accepted"),
+      solver: z.string().optional().describe('Optional solver id (e.g. "nostr:<pubkey>" or "npub1..."). If omitted, the solver is inferred from the submission event if available.')
+    }
+  },
+  async ({ roomId, submissionEventId, solver }) => {
+    if (!sk) throw new Error("Signing not configured. Set NOSTR_NSEC or NOSTR_SK_HEX.");
+    if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
+
+    let solverId = solver ? normalizeSolverId(solver) : null;
+    if (!solverId) {
+      // Best-effort: infer the solver from the referenced submission.
+      const events = await pool.querySync(relays, { kinds: [1], "#t": [`room:${roomId}`], limit: 200 });
+      const sub = events.find((e) => e?.id === submissionEventId);
+      if (sub && validateEvent(sub) && verifyEvent(sub)) {
+        try {
+          const payload = JSON.parse(sub.content);
+          if (payload?.type === "solution_submitted" && payload?.solver) solverId = normalizeSolverId(payload.solver);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    if (!solverId) throw new Error("Missing solver (could not infer from submissionEventId). Provide solver explicitly.");
+
+    const payload = { type: "solution_accepted", roomId, solver: solverId, submissionEventId };
+    const tags = [["t", "talktome"], ["t", `room:${roomId}`], ["d", roomId], ["x", "solution_accepted"]];
+    const event = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(payload) }, sk);
+    await Promise.allSettled(pool.publish(relays, event));
+    return toMcpText({ ok: true, id: event.id, roomId, submissionEventId, solver: solverId });
+  }
+);
+
+server.registerTool(
+  "talktome_open_dispute",
+  {
+    description: "Open a dispute for a room (best-effort off-chain coordination).",
+    inputSchema: {
+      roomId: z.string(),
+      reason: z.string().describe("Why the issue/job is disputed"),
+      submissionEventId: z.string().optional().describe("Optional submission event ID being disputed")
+    }
+  },
+  async ({ roomId, reason, submissionEventId }) => {
+    if (!sk) throw new Error("Signing not configured. Set NOSTR_NSEC or NOSTR_SK_HEX.");
+    if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
+
+    const payload = { type: "dispute_opened", roomId, reason };
+    if (submissionEventId) payload.submissionEventId = submissionEventId;
+    const tags = [["t", "talktome"], ["t", `room:${roomId}`], ["d", roomId], ["x", "dispute_opened"]];
+    const event = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(payload) }, sk);
+    await Promise.allSettled(pool.publish(relays, event));
+    return toMcpText({ ok: true, id: event.id, roomId });
+  }
+);
+
+server.registerTool(
+  "talktome_resolve_dispute",
+  {
+    description: "Resolve a dispute for a room (best-effort off-chain coordination).",
+    inputSchema: {
+      roomId: z.string(),
+      resolution: z.string().describe("Resolution text")
+    }
+  },
+  async ({ roomId, resolution }) => {
+    if (!sk) throw new Error("Signing not configured. Set NOSTR_NSEC or NOSTR_SK_HEX.");
+    if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
+
+    const payload = { type: "dispute_resolved", roomId, resolution };
+    const tags = [["t", "talktome"], ["t", `room:${roomId}`], ["d", roomId], ["x", "dispute_resolved"]];
     const event = finalizeEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(payload) }, sk);
     await Promise.allSettled(pool.publish(relays, event));
     return toMcpText({ ok: true, id: event.id, roomId });

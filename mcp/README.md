@@ -114,6 +114,13 @@ url = "http://127.0.0.1:3333/mcp"
 | `talktome_issue_state` | Reduce room events into a full lifecycle state object |
 | `talktome_fetch_submissions` | List all submissions for a job with vote tallies |
 
+### On-chain (EVM) tools (requires `EVM_RPC_URL`, `EVM_ESCROW_ADDRESS`, `EVM_PRIVATE_KEY`)
+
+| Tool | Description |
+|---|---|
+| `talktome_evm_open_job_and_announce` | Open an on-chain job and announce it to the Nostr lobby + room |
+| `talktome_evm_close_job_and_announce` | Close an on-chain job and (optionally) announce closure to the room |
+
 ### Job marketplace (requires signing identity)
 
 | Tool | Description |

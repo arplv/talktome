@@ -8,7 +8,11 @@ if (!rpcUrl || !escrow || !privateKey) {
   throw new Error("Set EVM_RPC_URL, EVM_ESCROW_ADDRESS, EVM_PRIVATE_KEY");
 }
 
-const bounty = BigInt(process.env.TALKTOME_BOUNTY ?? "0");
+const complexity = Number.parseInt(process.env.TALKTOME_COMPLEXITY ?? "3", 10);
+const stableToken = process.env.TALKTOME_STABLE_TOKEN ?? "0x0000000000000000000000000000000000000000";
+const stableBounty = BigInt(process.env.TALKTOME_STABLE_BOUNTY ?? "0");
+const deadline = BigInt(process.env.TALKTOME_DEADLINE_UNIX ?? "0");
+
 const title = process.env.TALKTOME_TITLE ?? "Need help";
 const description = process.env.TALKTOME_DESC ?? "Describe your problem here.";
 const tags = (process.env.TALKTOME_TAGS ?? "help").split(",").map((t) => t.trim()).filter(Boolean);
@@ -20,23 +24,36 @@ const provider = new JsonRpcProvider(rpcUrl);
 const wallet = new Wallet(privateKey, provider);
 const c = new Contract(escrow, TALK_TO_ME_ESCROW_ABI, wallet);
 
-const tokenAddress = await c.token();
+const tokenAddress = await c.ttm();
 const openFee = await c.openFee();
-const total = openFee + bounty;
 
-// Minimal ERC-20 approve/allowance.
-const erc20 = new Contract(
+// Approve TTM open fee (if any).
+const ttm = new Contract(
   tokenAddress,
   ["function allowance(address owner,address spender) view returns (uint256)", "function approve(address spender,uint256 amount) returns (bool)"],
   wallet
 );
-const allowance = await erc20.allowance(wallet.address, escrow);
-if (allowance < total) {
-  const approveTx = await erc20.approve(escrow, total);
+const allowance = await ttm.allowance(wallet.address, escrow);
+if (allowance < openFee) {
+  const approveTx = await ttm.approve(escrow, openFee);
   await approveTx.wait();
 }
 
-const tx = await c.openIssue(bounty, metadataHash);
+// Approve stable bounty (if any).
+if (stableToken !== "0x0000000000000000000000000000000000000000" && stableBounty > 0n) {
+  const stable = new Contract(
+    stableToken,
+    ["function allowance(address owner,address spender) view returns (uint256)", "function approve(address spender,uint256 amount) returns (bool)"],
+    wallet
+  );
+  const stableAllowance = await stable.allowance(wallet.address, escrow);
+  if (stableAllowance < stableBounty) {
+    const approveTx = await stable.approve(escrow, stableBounty);
+    await approveTx.wait();
+  }
+}
+
+const tx = await c.openJob(complexity, metadataHash, stableToken, stableBounty, deadline);
 const receipt = await tx.wait();
 const opened = receipt.logs.map((l) => {
   try {
@@ -44,7 +61,7 @@ const opened = receipt.logs.map((l) => {
   } catch {
     return null;
   }
-}).find((p) => p && p.name === "IssueOpened");
+}).find((p) => p && p.name === "JobOpened");
 
 console.log(
   JSON.stringify(
@@ -52,10 +69,9 @@ console.log(
       canonical,
       metadataHash,
       txHash: receipt.hash,
-      issueId: opened?.args?.issueId?.toString?.() ?? null
+      jobId: opened?.args?.jobId?.toString?.() ?? null
     },
     null,
     2
   )
 );
-
