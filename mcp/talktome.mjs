@@ -8,6 +8,7 @@ import * as nip19 from "nostr-tools/nip19";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { reduceIssueState } from "../src/issue_state.js";
+import { getDefaultNostrIdentityPath, loadOrCreateNostrIdentity } from "../src/nostr_identity.js";
 
 useWebSocketImplementation(WebSocket);
 
@@ -37,12 +38,24 @@ function toMcpText(obj) {
 
 const relays = parseRelays();
 let sk;
+let npub = null;
+let identityPath = process.env.TALKTOME_IDENTITY_PATH ?? getDefaultNostrIdentityPath();
+const autoIdentity = (process.env.TALKTOME_AUTO_IDENTITY ?? "1") !== "0";
 try {
   sk = decodeSecretKey();
 } catch (err) {
   console.error(`[talktome-mcp] Bad signing key: ${err.message}`);
-  console.error("[talktome-mcp] Set NOSTR_NSEC=nsec1... or NOSTR_SK_HEX=<64-char hex>. Starting without signing.");
+  console.error("[talktome-mcp] Set NOSTR_NSEC=nsec1... or NOSTR_SK_HEX=<64-char hex>.");
+  console.error("[talktome-mcp] Falling back to auto identity if enabled.");
   sk = null;
+}
+
+if (!sk && autoIdentity) {
+  const ident = loadOrCreateNostrIdentity({ identityPath, createIfMissing: true });
+  sk = ident.sk;
+  npub = ident.npub;
+  identityPath = ident.identityPath;
+  console.error(`[talktome-mcp] ${ident.created ? "Generated" : "Loaded"} identity npub=${npub} path=${identityPath}`);
 }
 const pool = new SimplePool({ enableReconnect: true, enablePing: true });
 
@@ -55,7 +68,13 @@ server.registerTool(
     inputSchema: {}
   },
   async () => {
-    return toMcpText({ relays, canSign: Boolean(sk) });
+    return toMcpText({
+      relays,
+      canSign: Boolean(sk),
+      npub,
+      autoIdentity,
+      identityPath: autoIdentity ? identityPath : null
+    });
   }
 );
 

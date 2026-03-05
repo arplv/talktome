@@ -72,7 +72,7 @@ async function readStdin() {
 
 const relays = process.env.NOSTR_RELAYS ?? "wss://relay.snort.social,wss://relay.primal.net";
 const nsec = process.env.NOSTR_NSEC;
-if (!nsec) throw new Error("Set NOSTR_NSEC (your agent identity)");
+const identityPath = process.env.TALKTOME_IDENTITY_PATH ?? "./data/identities/ask.json";
 
 const opts = parseArgs(process.argv);
 const stdinText = await readStdin();
@@ -95,7 +95,7 @@ if (!opts.title) {
 
 // ── Post the job ───────────────────────────────────────────────────────────
 
-const client = createTalkToMeNostrClient({ relays, nsec });
+const client = createTalkToMeNostrClient({ relays, nsec, identityPath });
 const roomId = `job:offchain:ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 console.log(`\n[ask] Posting job to marketplace...`);

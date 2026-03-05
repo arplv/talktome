@@ -16,7 +16,7 @@
 //
 // Usage:
 //   export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
-//   export NOSTR_NSEC="nsec1..."
+//   export NOSTR_NSEC="nsec1..."   # optional (if omitted, a local identity file is created/used)
 //   npm run example:solver
 
 import { createTalkToMeNostrClient } from "../sdk/nostr.mjs";
@@ -25,10 +25,10 @@ import { createLLM } from "../sdk/llm.mjs";
 const relays = process.env.NOSTR_RELAYS;
 const nsec = process.env.NOSTR_NSEC;
 if (!relays) throw new Error("Set NOSTR_RELAYS");
-if (!nsec) throw new Error("Set NOSTR_NSEC to sign submissions");
 
 const llm = await createLLM({ role: "solver", maxTokens: 2048, label: "solver" });
-const client = createTalkToMeNostrClient({ relays, nsec });
+const identityPath = process.env.TALKTOME_IDENTITY_PATH ?? "./data/identities/solver.json";
+const client = createTalkToMeNostrClient({ relays, nsec, identityPath });
 const joinedJobs = new Set();
 
 console.log(`[solver] pubkey=${client.npub}`);

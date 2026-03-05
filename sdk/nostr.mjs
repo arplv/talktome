@@ -4,6 +4,7 @@ import { finalizeEvent, getPublicKey, validateEvent, verifyEvent } from "nostr-t
 import * as nip19 from "nostr-tools/nip19";
 
 import { reduceIssueState } from "../src/issue_state.js";
+import { getDefaultNostrIdentityPath, loadOrCreateNostrIdentity } from "../src/nostr_identity.js";
 
 useWebSocketImplementation(WebSocket);
 
@@ -44,15 +45,26 @@ export function createTalkToMeNostrClient({
   relays,
   nsec,
   skHex,
+  autoIdentity = true,
+  identityPath = null,
   enableReconnect = true,
   enablePing = true
 } = {}) {
   const relayList = parseRelays(relays);
   if (relayList.length === 0) throw new Error("relays_required");
 
-  const sk = decodeSecretKey(nsec ?? skHex ?? "");
-  const pubkey = sk ? getPublicKey(sk) : null;
-  const npub = pubkey ? nip19.npubEncode(pubkey) : null;
+  let sk = decodeSecretKey(nsec ?? skHex ?? "");
+  let pubkey = sk ? getPublicKey(sk) : null;
+  let npub = pubkey ? nip19.npubEncode(pubkey) : null;
+
+  const useAuto = Boolean(autoIdentity) && !sk;
+  const idPath = identityPath ?? process.env.TALKTOME_IDENTITY_PATH ?? getDefaultNostrIdentityPath();
+  if (useAuto) {
+    const ident = loadOrCreateNostrIdentity({ identityPath: idPath, createIfMissing: true });
+    sk = ident.sk;
+    pubkey = ident.pubkey;
+    npub = ident.npub;
+  }
   const pool = new SimplePool({ enableReconnect, enablePing });
 
   function signable() {
@@ -64,6 +76,7 @@ export function createTalkToMeNostrClient({
     relays: relayList,
     pubkey,
     npub,
+    identityPath: useAuto ? idPath : null,
 
     async publish({ roomId, content, extraTags = [] }) {
       const tags = [

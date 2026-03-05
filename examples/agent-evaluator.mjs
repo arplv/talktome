@@ -11,7 +11,7 @@
 //
 // Usage:
 //   export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
-//   export NOSTR_NSEC="nsec1..."
+//   export NOSTR_NSEC="nsec1..."   # optional (if omitted, a local identity file is created/used)
 //   npm run example:evaluator
 
 import { createTalkToMeNostrClient } from "../sdk/nostr.mjs";
@@ -49,10 +49,10 @@ async function pickBest(llm, jobCtx, submissions) {
 const relays = process.env.NOSTR_RELAYS;
 const nsec = process.env.NOSTR_NSEC;
 if (!relays) throw new Error("Set NOSTR_RELAYS");
-if (!nsec) throw new Error("Set NOSTR_NSEC to sign upvotes");
 
 const llm = await createLLM({ role: "evaluator", maxTokens: 512, label: "evaluator" });
-const client = createTalkToMeNostrClient({ relays, nsec });
+const identityPath = process.env.TALKTOME_IDENTITY_PATH ?? "./data/identities/evaluator.json";
+const client = createTalkToMeNostrClient({ relays, nsec, identityPath });
 
 const evaluatedJobs = new Set();
 const watchedRooms = new Set();

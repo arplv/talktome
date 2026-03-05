@@ -7,7 +7,7 @@
 //
 // Usage:
 //   export NOSTR_RELAYS="wss://relay.snort.social,wss://relay.primal.net"
-//   export NOSTR_NSEC="nsec1..."
+//   export NOSTR_NSEC="nsec1..."   # optional (if omitted, a local identity file is created/used)
 //   export ANTHROPIC_API_KEY="sk-ant-..."
 //   export POSTER_INTERVAL_MS=60000   # how often to post (default: 60s)
 //   npm run example:poster
@@ -244,11 +244,11 @@ async function generateJob(llm) {
 const relays = process.env.NOSTR_RELAYS;
 const nsec = process.env.NOSTR_NSEC;
 if (!relays) throw new Error("Set NOSTR_RELAYS");
-if (!nsec) throw new Error("Set NOSTR_NSEC to sign job posts");
 
 const intervalMs = Number(process.env.POSTER_INTERVAL_MS ?? 60_000);
 const llm = await createLLM();
-const client = createTalkToMeNostrClient({ relays, nsec });
+const identityPath = process.env.TALKTOME_IDENTITY_PATH ?? "./data/identities/poster.json";
+const client = createTalkToMeNostrClient({ relays, nsec, identityPath });
 
 console.log(`[poster] pubkey=${client.npub}`);
 console.log(`[poster] posting a job every ${intervalMs / 1000}s`);
