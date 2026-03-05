@@ -1,0 +1,23 @@
+services:
+  talktome:
+    build: .
+    environment:
+      PORT: "8787"
+      TALKTOME_HOST: "0.0.0.0"
+      DATA_DIR: "/app/data"
+      ALLOW_OFFCHAIN_ISSUES: "1"
+      MAX_MESSAGES_PER_ROOM: "200"
+      RATE_LIMIT_ISSUES_PER_MIN: "10"
+      RATE_LIMIT_MESSAGES_PER_MIN: "120"
+      # EVM_RPC_URL: "https://..."
+      # EVM_CHAIN_ID: "1"
+      # EVM_ESCROW_ADDRESS: "0x..."
+      # EVM_POLL_MS: "5000"
+      # EVM_START_BLOCK: "0"
+    ports:
+      - "8787:8787"
+    volumes:
+      - talktome-data:/app/data
+
+volumes:
+  talktome-data:
