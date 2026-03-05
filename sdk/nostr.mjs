@@ -148,6 +148,184 @@ export function createTalkToMeNostrClient({
       return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "solution_accepted"]] });
     },
 
+    async announceJob({
+      jobRoomId,
+      title,
+      description,
+      category = null,
+      tags = [],
+      complexity = 1,
+      deadline_unix = null,
+      payment = null,
+      metadataHash = null
+    }) {
+      const payload = {
+        type: "job_opened",
+        roomId: jobRoomId,
+        title,
+        description,
+        tags,
+        complexity: Math.max(1, Math.min(10, Math.round(Number(complexity) || 1)))
+      };
+      if (category) payload.category = String(category);
+      if (deadline_unix) payload.deadline_unix = Number(deadline_unix);
+      if (payment) payload.payment = payment;
+      if (metadataHash) payload.metadataHash = String(metadataHash);
+
+      const lobby = await this.publish({
+        roomId: "lobby",
+        content: JSON.stringify(payload),
+        extraTags: [
+          ["x", "job_opened"],
+          ["d2", String(jobRoomId)]
+        ].concat(metadataHash ? [["m", String(metadataHash)]] : [])
+      });
+
+      const room = await this.publish({
+        roomId: jobRoomId,
+        content: JSON.stringify(payload),
+        extraTags: [["x", "job_context"]]
+      });
+
+      return { ok: true, lobbyEventId: lobby.id, roomEventId: room.id, jobRoomId };
+    },
+
+    async submitJobSolution({ roomId, artifact, summary = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = {
+        type: "solution_submitted",
+        roomId,
+        solver: `nostr:${pubkey}`,
+        artifact,
+        summary
+      };
+      return this.publish({
+        roomId,
+        content: JSON.stringify(payload),
+        extraTags: [["x", "solution_submitted"]]
+      });
+    },
+
+    async requestEvaluation({ roomId, submissionCount = null, deadline_unix = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = { type: "evaluation_requested", roomId };
+      if (submissionCount != null) payload.submissionCount = Number(submissionCount);
+      if (deadline_unix != null) payload.deadline_unix = Number(deadline_unix);
+      return this.publish({
+        roomId,
+        content: JSON.stringify(payload),
+        extraTags: [["x", "evaluation_requested"]]
+      });
+    },
+
+    async upvote({ roomId, submissionEventId, reason = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = {
+        type: "upvote",
+        roomId,
+        submissionEventId,
+        voter: `nostr:${pubkey}`
+      };
+      if (reason) payload.reason = String(reason);
+      return this.publish({
+        roomId,
+        content: JSON.stringify(payload),
+        extraTags: [["x", "upvote"]]
+      });
+    },
+
+    watchEvaluation({ roomId, sinceSeconds = Math.floor(Date.now() / 1000) - 60 * 30, onVote } = {}) {
+      const since = Number(sinceSeconds) || 0;
+      const sub = pool.subscribeMany(
+        relayList,
+        { kinds: [1], "#t": [roomTopic(roomId)], since },
+        {
+          onevent: (evt) => {
+            if (!validateEvent(evt) || !verifyEvent(evt)) return;
+            if (!isTalkToMeEvent(evt)) return;
+            let payload = null;
+            try {
+              payload = JSON.parse(evt.content);
+            } catch {
+              return;
+            }
+            if (payload?.type !== "upvote") return;
+            onVote?.({ event: evt, payload });
+          }
+        }
+      );
+      return { close: () => sub?.close?.("client_close") };
+    },
+
+    async offerService({ title, description, categories = [], price = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const serviceId = `svc:${pubkey}:${Date.now().toString(36)}`;
+      const payload = {
+        type: "service_offered",
+        serviceId,
+        provider: `nostr:${pubkey}`,
+        title,
+        description,
+        categories
+      };
+      if (price) payload.price = price;
+      const result = await this.publish({
+        roomId: "services",
+        content: JSON.stringify(payload),
+        extraTags: [["x", "service_offered"]]
+      });
+      return { ...result, serviceId };
+    },
+
+    async requestService({ serviceId, jobRoomId, details } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = {
+        type: "service_request",
+        serviceId,
+        buyer: `nostr:${pubkey}`,
+        jobRoomId,
+        details
+      };
+      return this.publish({
+        roomId: "services",
+        content: JSON.stringify(payload),
+        extraTags: [["x", "service_request"]]
+      });
+    },
+
+    async proposeBarter({ offer, want, categories = [] } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const barterId = `barter:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const payload = {
+        type: "service_barter",
+        barterId,
+        proposer: `nostr:${pubkey}`,
+        offer,
+        want,
+        categories
+      };
+      const result = await this.publish({
+        roomId: "services",
+        content: JSON.stringify(payload),
+        extraTags: [["x", "service_barter"]]
+      });
+      return { ...result, barterId };
+    },
+
+    async acceptBarter({ barterId } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = {
+        type: "barter_accepted",
+        barterId,
+        accepter: `nostr:${pubkey}`
+      };
+      return this.publish({
+        roomId: "services",
+        content: JSON.stringify(payload),
+        extraTags: [["x", "barter_accepted"]]
+      });
+    },
+
     async openDispute({ roomId, reason = null } = {}) {
       if (!pubkey) throw new Error("signing_not_configured");
       const payload = { type: "dispute_opened", roomId, reason };
@@ -160,7 +338,7 @@ export function createTalkToMeNostrClient({
       return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "dispute_resolved"]] });
     },
 
-    watchLobby({ sinceSeconds = Math.floor(Date.now() / 1000) - 60 * 30, onIssue } = {}) {
+    watchLobby({ sinceSeconds = Math.floor(Date.now() / 1000) - 60 * 30, onIssue, onJob } = {}) {
       const since = Number(sinceSeconds) || 0;
       const sub = pool.subscribeMany(
         relayList,
@@ -175,8 +353,12 @@ export function createTalkToMeNostrClient({
             } catch {
               return;
             }
-            if (payload?.type !== "issue_opened") return;
-            onIssue?.({ event: evt, payload });
+            if (payload?.type === "issue_opened") {
+              onIssue?.({ event: evt, payload });
+            }
+            if (payload?.type === "job_opened") {
+              onJob?.({ event: evt, payload });
+            }
           }
         }
       );

@@ -1,7 +1,6 @@
 import { safeJsonParse } from "./protocol.js";
 
 function cmpEvent(a, b) {
-  // Deterministic ordering: created_at, then id.
   const at = Number(a?.created_at) || 0;
   const bt = Number(b?.created_at) || 0;
   if (at !== bt) return at - bt;
@@ -16,12 +15,13 @@ function getRoomIdFromPayload(payload) {
 }
 
 /**
- * Reduce a list of Nostr events into a best-effort issue state.
+ * Reduce a list of Nostr events into a best-effort issue/job state.
  *
- * Notes:
- * - This is an off-chain coordination state machine. It is not canonical.
- * - We assume each "transition" is a Nostr-signed JSON payload in event.content.
- * - For automation, consumers should use this reducer + their own policies.
+ * Supports both the legacy issue lifecycle (issue_opened → issue_claimed →
+ * solution_submitted → solution_accepted) and the new job lifecycle
+ * (job_opened → solution_submitted → evaluation_requested → upvote).
+ *
+ * This is an off-chain coordination state machine — it is not canonical.
  */
 export function reduceIssueState({ roomId, events }) {
   const out = {
@@ -29,27 +29,35 @@ export function reduceIssueState({ roomId, events }) {
     state: "OPEN",
     openerPubkey: null,
     claimedBy: null,
-    lastSubmission: null, // { eventId, pubkey, artifact, summary, created_at }
-    accepted: null, // { eventId, pubkey(opener), solver, submissionEventId, created_at }
-    dispute: null, // { eventId, pubkey, reason, created_at, resolvedBy, resolution }
-    signals: { claims: 0, submissions: 0, accepts: 0, disputes: 0, resolves: 0 },
+    complexity: null,
+    lastSubmission: null,
+    accepted: null,
+    dispute: null,
+    evaluationRequested: null,
+    votes: [],
+    voteTally: {},
+    winner: null,
+    signals: { claims: 0, submissions: 0, accepts: 0, disputes: 0, resolves: 0, evaluations: 0, upvotes: 0 },
     warnings: []
   };
 
   const evts = Array.isArray(events) ? Array.from(events) : [];
   evts.sort(cmpEvent);
 
-  // First pass: find opener if the issue is echoed into the room.
+  // First pass: find opener from either job_opened or issue_opened.
   for (const evt of evts) {
     const parsed = safeJsonParse(evt?.content ?? "");
     if (!parsed.ok) continue;
     const payload = parsed.value;
-    if (payload?.type !== "issue_opened") continue;
+    if (payload?.type !== "issue_opened" && payload?.type !== "job_opened") continue;
     const rid = getRoomIdFromPayload(payload);
     if (rid && roomId && rid !== roomId) continue;
     out.openerPubkey = String(evt.pubkey || "") || null;
+    if (payload.complexity != null) out.complexity = Number(payload.complexity) || null;
     break;
   }
+
+  const seenVoters = new Set();
 
   for (const evt of evts) {
     const parsed = safeJsonParse(evt?.content ?? "");
@@ -63,7 +71,6 @@ export function reduceIssueState({ roomId, events }) {
 
     if (type === "issue_claimed") {
       out.signals.claims += 1;
-      // Claim is signed by claimant; prefer payload.solver, else event.pubkey.
       out.claimedBy = payload?.solver ?? `nostr:${evt.pubkey}`;
       if (!out.openerPubkey && typeof payload?.openerPubkey === "string") out.openerPubkey = payload.openerPubkey;
       continue;
@@ -84,7 +91,6 @@ export function reduceIssueState({ roomId, events }) {
 
     if (type === "solution_accepted") {
       out.signals.accepts += 1;
-      // Acceptance should be signed by opener; we can't enforce that on-chain here.
       out.accepted = {
         eventId: evt.id,
         pubkey: evt.pubkey,
@@ -93,6 +99,34 @@ export function reduceIssueState({ roomId, events }) {
         created_at: evt.created_at
       };
       if (!out.openerPubkey) out.openerPubkey = evt.pubkey;
+      continue;
+    }
+
+    if (type === "evaluation_requested") {
+      out.signals.evaluations += 1;
+      out.evaluationRequested = {
+        eventId: evt.id,
+        pubkey: evt.pubkey,
+        submissionCount: payload?.submissionCount ?? null,
+        deadline_unix: payload?.deadline_unix ?? null,
+        created_at: evt.created_at
+      };
+      continue;
+    }
+
+    if (type === "upvote") {
+      out.signals.upvotes += 1;
+      const voter = evt.pubkey;
+      if (seenVoters.has(voter)) {
+        out.warnings.push(`duplicate_vote:${voter}`);
+        continue;
+      }
+      seenVoters.add(voter);
+      const submissionId = payload?.submissionEventId;
+      if (submissionId) {
+        out.votes.push({ voter, submissionEventId: submissionId, eventId: evt.id, created_at: evt.created_at });
+        out.voteTally[submissionId] = (out.voteTally[submissionId] || 0) + 1;
+      }
       continue;
     }
 
@@ -113,12 +147,8 @@ export function reduceIssueState({ roomId, events }) {
       out.signals.resolves += 1;
       if (!out.dispute) {
         out.dispute = {
-          eventId: null,
-          pubkey: null,
-          reason: null,
-          created_at: null,
-          resolvedBy: evt.pubkey,
-          resolution: payload?.resolution ?? null
+          eventId: null, pubkey: null, reason: null, created_at: null,
+          resolvedBy: evt.pubkey, resolution: payload?.resolution ?? null
         };
       } else {
         out.dispute.resolvedBy = evt.pubkey;
@@ -128,11 +158,32 @@ export function reduceIssueState({ roomId, events }) {
     }
   }
 
-  if (out.dispute && !out.dispute.resolvedBy) out.state = "DISPUTED";
-  else if (out.accepted) out.state = "ACCEPTED";
-  else if (out.lastSubmission) out.state = "SUBMITTED";
-  else if (out.claimedBy) out.state = "CLAIMED";
-  else out.state = "OPEN";
+  // Derive winner from vote tally.
+  if (Object.keys(out.voteTally).length > 0) {
+    let topId = null;
+    let topCount = 0;
+    for (const [sid, count] of Object.entries(out.voteTally)) {
+      if (count > topCount) { topId = sid; topCount = count; }
+    }
+    if (topId) out.winner = { submissionEventId: topId, votes: topCount };
+  }
+
+  // Derive state from signals (new lifecycle takes precedence when present).
+  if (out.dispute && !out.dispute.resolvedBy) {
+    out.state = "DISPUTED";
+  } else if (out.accepted) {
+    out.state = "SETTLED";
+  } else if (out.winner) {
+    out.state = "VOTING";
+  } else if (out.evaluationRequested) {
+    out.state = "EVALUATING";
+  } else if (out.signals.submissions > 0) {
+    out.state = "COMPETING";
+  } else if (out.claimedBy) {
+    out.state = "CLAIMED";
+  } else {
+    out.state = "OPEN";
+  }
 
   if (out.accepted && out.openerPubkey && out.accepted.pubkey !== out.openerPubkey) {
     out.warnings.push("acceptance_pubkey_mismatch");
@@ -140,4 +191,3 @@ export function reduceIssueState({ roomId, events }) {
 
   return out;
 }
-
