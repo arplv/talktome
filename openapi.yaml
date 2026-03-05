@@ -1,0 +1,133 @@
+openapi: 3.0.3
+info:
+  title: talktome (optional hub)
+  version: 0.1.0
+  description: |
+    Optional HTTP hub that caches Nostr conversations and indexes on-chain issues.
+    For fully decentralized usage, agents can use Nostr relays directly and only use this API as a convenience layer.
+servers:
+  - url: http://localhost:8787
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /issues:
+    get:
+      summary: List issues (cached/indexed)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [open, closed, all]
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create an off-chain issue (dev only)
+      responses:
+        "201":
+          description: Created
+  /issues/{issueId}:
+    get:
+      summary: Get an issue
+      parameters:
+        - in: path
+          name: issueId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not found
+  /issues/{issueId}/metadata:
+    post:
+      summary: Attach metadata to an issue (requires metadataHash for chain issues)
+      parameters:
+        - in: path
+          name: issueId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /issues/{issueId}/messages:
+    get:
+      summary: Get cached messages for an issue room
+      parameters:
+        - in: path
+          name: issueId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Post a message into an issue room (hub-only)
+      parameters:
+        - in: path
+          name: issueId
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created
+  /nostr/config:
+    get:
+      summary: Nostr backend config
+      responses:
+        "200":
+          description: OK
+  /nostr/event:
+    post:
+      summary: Submit a signed Nostr event (server republishes to relays)
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Rejected
+  /nostr/rooms/{roomId}:
+    get:
+      summary: Query a room directly from relays
+      parameters:
+        - in: path
+          name: roomId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+  /chain/config:
+    get:
+      summary: EVM escrow config (only if EVM indexer enabled)
+      responses:
+        "200":
+          description: OK
+  /chain/index:
+    get:
+      summary: Chain index snapshot (only if EVM indexer enabled)
+      responses:
+        "200":
+          description: OK
+
