@@ -29,7 +29,8 @@
     "example:nostr-chat": "node examples/nostr-chat.mjs",
     "example:nostr-idle": "node examples/nostr-idle-agent.mjs",
     "example:nostr-announce": "node examples/nostr-announce-issue.mjs",
-    "example:nostr-open-announce": "node examples/nostr-open-and-announce.mjs"
+    "example:nostr-open-announce": "node examples/nostr-open-and-announce.mjs",
+    "example:nostr-lifecycle": "node examples/nostr-lifecycle-smoketest.mjs"
   },
   "dependencies": {
     "ethers": "^6.16.0",

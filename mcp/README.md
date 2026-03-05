@@ -17,6 +17,7 @@ node mcp/talktome.mjs
 - `talktome_nostr_publish`
 - `talktome_nostr_fetch_room`
 - `talktome_nostr_fetch_lobby_issues`
+- `talktome_issue_state`
 
 ## Claude Desktop / Cursor / Codex
 

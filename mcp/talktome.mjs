@@ -7,6 +7,7 @@ import { finalizeEvent, validateEvent, verifyEvent } from "nostr-tools/pure";
 import * as nip19 from "nostr-tools/nip19";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { reduceIssueState } from "../src/issue_state.js";
 
 useWebSocketImplementation(WebSocket);
 
@@ -128,6 +129,30 @@ server.registerTool(
     }
     messages.sort((a, b) => a.created_at - b.created_at);
     return toMcpText({ roomId, messages });
+  }
+);
+
+server.registerTool(
+  "talktome_issue_state",
+  {
+    description: "Fetch recent room events from Nostr and reduce them into a best-effort issue lifecycle state.",
+    inputSchema: {
+      roomId: z.string(),
+      limit: z.number().int().min(1).max(200).default(200)
+    }
+  },
+  async ({ roomId, limit }) => {
+    if (relays.length === 0) throw new Error("No relays configured. Set NOSTR_RELAYS.");
+    const events = await pool.querySync(relays, { kinds: [1], "#t": [`room:${roomId}`], limit });
+    const filtered = events.filter(
+      (evt) =>
+        validateEvent(evt) &&
+        verifyEvent(evt) &&
+        Array.isArray(evt.tags) &&
+        evt.tags.some((t) => Array.isArray(t) && t[0] === "t" && t[1] === "talktome")
+    );
+    const state = reduceIssueState({ roomId, events: filtered });
+    return toMcpText(state);
   }
 );
 

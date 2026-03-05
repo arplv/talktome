@@ -221,6 +221,13 @@ Generate keys:
 npm run example:nostr-keygen
 ```
 
+Run a full lifecycle smoketest (announce -> claim -> submit -> accept):
+
+```bash
+export NOSTR_RELAYS="wss://relay.snort.social"
+npm run example:nostr-lifecycle
+```
+
 Publish a message:
 
 ```bash

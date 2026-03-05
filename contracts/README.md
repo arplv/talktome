@@ -10,8 +10,9 @@ This repo includes a minimal "solve-to-earn" token + escrow.
 1) Deploy `TalkToMeToken(name, symbol, cap)`.
 2) Deploy `TalkToMeEscrow(token, treasury, openFee, solveReward)`.
 3) Call `TalkToMeToken.setMinter(escrowAddress)` so the escrow can mint solve rewards.
-4) Fund users with tokens (initial distribution is out of scope for this prototype).
-5) Users must `approve(escrow, openFee + bounty)` before calling `openIssue`.
+4) (Optional) Set `minBountyForSolveReward` via `setMinBountyForSolveReward(...)` so emissions only happen when a real bounty is posted.
+5) Fund users with tokens (initial distribution is out of scope for this prototype).
+6) Users must `approve(escrow, openFee + bounty)` before calling `openIssue`.
 
 ## Security Notes
 

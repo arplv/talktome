@@ -1,7 +1,9 @@
 import WebSocket from "ws";
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
-import { finalizeEvent, validateEvent, verifyEvent } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey, validateEvent, verifyEvent } from "nostr-tools/pure";
 import * as nip19 from "nostr-tools/nip19";
+
+import { reduceIssueState } from "../src/issue_state.js";
 
 useWebSocketImplementation(WebSocket);
 
@@ -49,6 +51,8 @@ export function createTalkToMeNostrClient({
   if (relayList.length === 0) throw new Error("relays_required");
 
   const sk = decodeSecretKey(nsec ?? skHex ?? "");
+  const pubkey = sk ? getPublicKey(sk) : null;
+  const npub = pubkey ? nip19.npubEncode(pubkey) : null;
   const pool = new SimplePool({ enableReconnect, enablePing });
 
   function signable() {
@@ -58,6 +62,8 @@ export function createTalkToMeNostrClient({
 
   return {
     relays: relayList,
+    pubkey,
+    npub,
 
     async publish({ roomId, content, extraTags = [] }) {
       const tags = [
@@ -105,7 +111,7 @@ export function createTalkToMeNostrClient({
       if (metadataHash) payload.metadataHash = String(metadataHash);
       if (chain) payload.chain = chain;
 
-      return this.publish({
+      const lobby = await this.publish({
         roomId: "lobby",
         content: JSON.stringify(payload),
         extraTags: [
@@ -113,6 +119,45 @@ export function createTalkToMeNostrClient({
           ["d2", String(issueRoomId)]
         ].concat(metadataHash ? [["m", String(metadataHash)]] : [])
       });
+
+      // Echo issue context into the issue room so agents can reconstruct state from the room alone.
+      const room = await this.publish({
+        roomId: issueRoomId,
+        content: JSON.stringify(payload),
+        extraTags: [["x", "issue_context"]]
+      });
+
+      return { ok: true, lobbyEventId: lobby.id, roomEventId: room.id, issueRoomId };
+    },
+
+    async claimIssue({ roomId, note = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = { type: "issue_claimed", roomId, solver: `nostr:${pubkey}`, note };
+      return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "issue_claimed"]] });
+    },
+
+    async submitSolution({ roomId, artifact, summary = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = { type: "solution_submitted", roomId, solver: `nostr:${pubkey}`, artifact, summary };
+      return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "solution_submitted"]] });
+    },
+
+    async acceptSolution({ roomId, solver, submissionEventId = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = { type: "solution_accepted", roomId, solver, submissionEventId };
+      return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "solution_accepted"]] });
+    },
+
+    async openDispute({ roomId, reason = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = { type: "dispute_opened", roomId, reason };
+      return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "dispute_opened"]] });
+    },
+
+    async resolveDispute({ roomId, resolution = null } = {}) {
+      if (!pubkey) throw new Error("signing_not_configured");
+      const payload = { type: "dispute_resolved", roomId, resolution };
+      return this.publish({ roomId, content: JSON.stringify(payload), extraTags: [["x", "dispute_resolved"]] });
     },
 
     watchLobby({ sinceSeconds = Math.floor(Date.now() / 1000) - 60 * 30, onIssue } = {}) {
@@ -162,9 +207,13 @@ export function createTalkToMeNostrClient({
         .sort((a, b) => a.created_at - b.created_at);
     },
 
+    async fetchIssueState({ roomId, limit = 200 } = {}) {
+      const events = await this.fetchRoom({ roomId, limit });
+      return reduceIssueState({ roomId, events });
+    },
+
     destroy() {
       pool.destroy();
     }
   };
 }
-

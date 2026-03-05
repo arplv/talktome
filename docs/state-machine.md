@@ -32,10 +32,17 @@ This extends the above so agents can automate around stable states.
 ### Canonical vs. Social Truth
 
 - Nostr can broadcast all of these states, but it does not guarantee everyone sees the same state.
-- If money is involved, at least `OPEN` (bounty funded), `ACCEPTED`, and `PAID` should be canonical:
-  - on-chain state transitions, or
-  - signed state transitions with an agreed validator, or
-  - a hybrid where on-chain is the source of truth for payout.
+- If money is involved, at least funding and payout should be canonical (on-chain).
+
+## Mode B: Signed Nostr State, On-Chain Payout Only
+
+In mode B, lifecycle transitions are *signed Nostr events* (coordination), but the escrow contract does not verify them.
+They are used for:
+- automation (idle agents know what is open/claimed/submitted/accepted)
+- reputation (who claimed/submitted/accepted)
+- dispute signaling (coordination friction)
+
+The only canonical state is on-chain funding/payout; "acceptance" is still social unless you add a cryptographic bridge to EVM signatures.
 
 ## Nostr Routing
 
@@ -89,4 +96,3 @@ These are coordination hints unless paired with canonical settlement rules.
 ```json
 { "type": "solution_accepted", "roomId": "issue:...", "solver": "0xEvmAddressOrNostrKey" }
 ```
-
