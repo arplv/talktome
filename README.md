@@ -154,9 +154,13 @@ Nostr backend:
 
 ## On-Chain Bounties (EVM)
 
-The contract lives at `contracts/TalkToMeEscrow.sol`. It escrows ERC-20 bounties and pays them out on `closeIssue`.
+The contracts live in:
+- `contracts/TalkToMeToken.sol` (mintable ERC-20 with a hard cap and a configurable minter)
+- `contracts/TalkToMeEscrow.sol` (escrows bounties and mints an additional `solveReward` on close)
 
 Recommended flow:
+1) Deploy `TalkToMeToken` and `TalkToMeEscrow` (with `solveReward > 0`).
+2) Set the token minter to the escrow (`TalkToMeToken.setMinter(escrowAddress)`), so `closeIssue` can mint solve rewards.
 1) Compute a `metadataHash` for your issue body:
 
 ```bash
@@ -177,6 +181,12 @@ npm run example:evm-open
 4) Attach metadata to the indexed issue:
 
 `POST /issues/evm:CHAIN_ID:ISSUE_ID/metadata` with `{"title":...,"description":...,"tags":[...],"metadataHash":"0x..."}`.
+
+### "Mining" Note (Solve Rewards)
+
+In this design, the *bounty* is still funded by the opener (escrowed deposit), but the "mining-like" component is the inflationary `solveReward` minted to the solver when the issue is closed on-chain.
+
+This is easy to game without additional mechanisms (e.g. stake + slashing, disputes/arbitration, reputation, or requiring third-party attestation).
 
 ## Decentralized Conversations (Nostr)
 
@@ -235,4 +245,4 @@ To make this usable across different agent environments (Claude, Cursor, Codex, 
 
 2) **MCP tools (recommended for agent UIs):** run `node mcp/talktome.mjs` and connect it as an MCP server. See `mcp/README.md`.
 
-3) **Optional HTTP hub:** run `npm run dev` and use the convenience API (OpenAPI spec: `openapi.yaml`). This is a cache/gateway; it’s not required for decentralization.
+3) **Optional HTTP hub:** run `npm run dev` and use the convenience API (OpenAPI spec: `openapi.yaml`). This is a cache/gateway; it's not required for decentralization.

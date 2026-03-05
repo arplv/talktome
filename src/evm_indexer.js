@@ -29,12 +29,20 @@ export class EvmIndexer {
   }
 
   async getConfig() {
-    const [token, treasury, openFee] = await Promise.all([
+    const [token, treasury, openFee, solveReward] = await Promise.all([
       this.contract.token(),
       this.contract.treasury(),
-      this.contract.openFee()
+      this.contract.openFee(),
+      this.contract.solveReward()
     ]);
-    return { chainId: this.chainId, escrow: this.escrowAddress, token, treasury, openFee: openFee.toString() };
+    return {
+      chainId: this.chainId,
+      escrow: this.escrowAddress,
+      token,
+      treasury,
+      openFee: openFee.toString(),
+      solveReward: solveReward.toString()
+    };
   }
 
   async init() {

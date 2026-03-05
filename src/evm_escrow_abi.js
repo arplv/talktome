@@ -4,6 +4,6 @@ export const TALK_TO_ME_ESCROW_ABI = [
   "function token() view returns (address)",
   "function treasury() view returns (address)",
   "function openFee() view returns (uint256)",
+  "function solveReward() view returns (uint256)",
   "function issues(uint256 issueId) view returns (address opener, uint256 bounty, bytes32 metadataHash, bool closed)"
 ];
-
