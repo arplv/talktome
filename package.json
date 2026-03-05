@@ -24,7 +24,11 @@
     "example:evm-open": "node examples/evm-open-issue.mjs",
     "example:evm-close": "node examples/evm-close-issue.mjs",
     "example:nostr-keygen": "node examples/nostr-keygen.mjs",
-    "example:nostr-publish": "node examples/nostr-publish.mjs"
+    "example:nostr-publish": "node examples/nostr-publish.mjs",
+    "example:nostr-chat": "node examples/nostr-chat.mjs",
+    "example:nostr-idle": "node examples/nostr-idle-agent.mjs",
+    "example:nostr-announce": "node examples/nostr-announce-issue.mjs",
+    "example:nostr-open-announce": "node examples/nostr-open-and-announce.mjs"
   },
   "dependencies": {
     "ethers": "^6.16.0",
