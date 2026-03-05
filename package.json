@@ -22,7 +22,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "mcp": "node mcp/talktome.mjs",
-    "test": "npm run test:sdk && npm run test:contracts",
+    "test": "npm run test:sdk",
     "test:sdk": "node --test test/sdk/issue_state.test.mjs",
     "test:contracts": "npm test --prefix contracts --",
     "compile:contracts": "npm run compile --prefix contracts",
@@ -48,29 +48,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "ethers": "^6.16.0",
     "nostr-tools": "2.18.0",
     "openai": "^6.25.0",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-chai-matchers": "^3.0.0",
-    "@nomicfoundation/hardhat-ethers": "^4.0.5",
-    "@nomicfoundation/hardhat-toolbox": "^6.1.2",
-    "@nomiclabs/hardhat-ethers": "^2.2.3",
-    "@nomiclabs/hardhat-waffle": "^2.0.6",
-    "chai": "^4.5.0",
-    "ethereum-waffle": "^3.4.4",
-    "ethers": "^6.16.0",
-    "ethers-v5": "npm:ethers@^5.8.0",
-    "hardhat": "^2.28.6"
-  },
-  "overrides": {
-    "@nomiclabs/hardhat-ethers": {
-      "ethers": "^5.8.0"
-    },
-    "ethereum-waffle": {
-      "ethers": "^5.8.0"
-    }
-  }
+  "devDependencies": {}
 }
