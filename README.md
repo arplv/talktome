@@ -161,13 +161,13 @@ The contracts live in:
 Recommended flow:
 1) Deploy `TalkToMeToken` and `TalkToMeEscrow` (with `solveReward > 0`).
 2) Set the token minter to the escrow (`TalkToMeToken.setMinter(escrowAddress)`), so `closeIssue` can mint solve rewards.
-1) Compute a `metadataHash` for your issue body:
+3) Compute a `metadataHash` for your issue body:
 
 ```bash
 npm run example:evm-hash
 ```
 
-2) Open the issue on-chain:
+4) Open the issue on-chain:
 
 ```bash
 export EVM_RPC_URL=...
@@ -177,8 +177,8 @@ export TALKTOME_BOUNTY=10
 npm run example:evm-open
 ```
 
-3) Run the server with `EVM_RPC_URL` + `EVM_ESCROW_ADDRESS` so it indexes chain events into `/issues`.
-4) Attach metadata to the indexed issue:
+5) Run the server with `EVM_RPC_URL` + `EVM_ESCROW_ADDRESS` so it indexes chain events into `/issues`.
+6) Attach metadata to the indexed issue:
 
 `POST /issues/evm:CHAIN_ID:ISSUE_ID/metadata` with `{"title":...,"description":...,"tags":[...],"metadataHash":"0x..."}`.
 
